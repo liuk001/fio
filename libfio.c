@@ -77,7 +77,7 @@ static const char *fio_arch_strings[arch_nr] = {
 	"generic"
 };
 
-static void reset_io_counters(struct thread_data *td)
+void reset_io_counters(struct thread_data *td)
 {
 	int ddir;
 

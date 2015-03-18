@@ -378,6 +378,29 @@ static void set_cmd_options(struct thread_data *td)
 		o->timeout = def_timeout;
 }
 
+static void dup_td(struct thread_data *dst, struct thread_data *src,
+		   int preserve_eo, int thread_number)
+{
+	memcpy(dst, src, sizeof(*dst));
+	dst->parent = dst;
+
+	dst->io_ops = NULL;
+	if (!preserve_eo)
+		dst->eo = NULL;
+
+	dst->o.uid = dst->o.gid = -1U;
+
+	dup_files(dst, src);
+	fio_options_mem_dupe(dst);
+
+	profile_add_hooks(dst);
+
+	dst->thread_number = thread_number;
+	dst->subjob_number = 0;
+
+	set_cmd_options(dst);
+}
+
 /*
  * Return a free job structure.
  */
@@ -401,21 +424,8 @@ static struct thread_data *get_new_job(int global, struct thread_data *parent,
 	}
 
 	td = &threads[thread_number++];
-	*td = *parent;
 
-	td->io_ops = NULL;
-	if (!preserve_eo)
-		td->eo = NULL;
-
-	td->o.uid = td->o.gid = -1U;
-
-	dup_files(td, parent);
-	fio_options_mem_dupe(td);
-
-	profile_add_hooks(td);
-
-	td->thread_number = thread_number;
-	td->subjob_number = 0;
+	dup_td(td, parent, preserve_eo, thread_number);
 
 	if (jobname)
 		td->o.name = strdup(jobname);
@@ -423,7 +433,6 @@ static struct thread_data *get_new_job(int global, struct thread_data *parent,
 	if (!parent->o.group_reporting)
 		stat_number++;
 
-	set_cmd_options(td);
 	return td;
 }
 

@@ -87,6 +87,11 @@ static inline void __flist_del(struct flist_head *prev,
 	prev->next = next;
 }
 
+static inline void __flist_del_entry(struct flist_head *entry)
+{
+	__flist_del(entry->prev, entry->next);
+}
+
 /**
  * flist_del - deletes entry from list.
  * @entry: the element to delete from the list.
@@ -108,6 +113,29 @@ static inline void flist_del_init(struct flist_head *entry)
 {
 	__flist_del(entry->prev, entry->next);
 	INIT_FLIST_HEAD(entry);
+}
+
+/**
+ * flist_move - delete from one list and add as another's head
+ * @list: the entry to move
+ * @head: the head that will precede our entry
+ */
+static inline void flist_move(struct flist_head *list, struct flist_head *head)
+{
+	__flist_del_entry(list);
+	flist_add(list, head);
+}
+
+/**
+ * list_move_tail - delete from one list and add as another's tail
+ * @list: the entry to move
+ * @head: the head that will follow our entry
+ */
+static inline void flist_move_tail(struct flist_head *list,
+				   struct flist_head *head)
+{
+	__flist_del_entry(list);
+	flist_add_tail(list, head);
 }
 
 /**

@@ -21,11 +21,19 @@ struct null_data {
 	struct io_u **io_us;
 	int queued;
 	int events;
+	int ios;
+	int in_delay;
+	struct timeval delay_time;
 };
 
 static struct io_u *fio_null_event(struct thread_data *td, int event)
 {
 	struct null_data *nd = (struct null_data *) td->io_ops->data;
+
+	if (nd->io_us[event]->null == 10000 - 100) {
+		td->in_delay = 0;
+		printf("stop delay\n");
+	}
 
 	return nd->io_us[event];
 }
@@ -36,8 +44,16 @@ static int fio_null_getevents(struct thread_data *td, unsigned int min_events,
 {
 	struct null_data *nd = (struct null_data *) td->io_ops->data;
 	int ret = 0;
-	
+
 	if (min_events) {
+		uint64_t max_sleep = 0;
+		int i;
+
+		for (i = 0; i < nd->events; i++) {
+			struct io_u *io_u = nd->io_us[i];
+			max_sleep = max(io_u->null, max_sleep);
+		}
+		usleep(max_sleep);
 		ret = nd->events;
 		nd->events = 0;
 	}
@@ -60,19 +76,58 @@ static int fio_null_commit(struct thread_data *td)
 	return 0;
 }
 
+static unsigned int __null_sleep(struct thread_data *td, struct io_u *io_u)
+{
+	if (io_u->parent && io_u->parent != td)
+		td = io_u->parent;
+
+	if (td->in_delay) {
+		if (td->in_delay < 100) {
+			uint64_t left = 10000 - (td->in_delay * 100);
+			td->in_delay++;
+			return left;
+		} else {
+			td->in_delay = 0;
+			return 100;
+		}
+	} else {
+		td->ios++;
+		if (!(td->ios % 100))
+			td->in_delay = 1;
+		return 100;
+	}
+
+}
+
+static void null_sleep(struct thread_data *td, struct io_u *io_u)
+{
+	usleep(__null_sleep(td, io_u));
+}
+
 static int fio_null_queue(struct thread_data *td, struct io_u *io_u)
 {
 	struct null_data *nd = (struct null_data *) td->io_ops->data;
+	int ret;
 
 	fio_ro_check(td, io_u);
 
-	if (td->io_ops->flags & FIO_SYNCIO)
+	if (td->io_ops->flags & FIO_SYNCIO) {
+		int in_delay = td->in_delay;
+		null_sleep(td, io_u);
+		if (in_delay && td->in_delay)
+			td->in_delay = 0;
 		return FIO_Q_COMPLETED;
-	if (nd->events)
-		return FIO_Q_BUSY;
+	}
 
-	nd->io_us[nd->queued++] = io_u;
-	return FIO_Q_QUEUED;
+	if (nd->events)
+		ret = FIO_Q_BUSY;
+	else {
+		io_u->null = __null_sleep(td, io_u);
+		nd->io_us[nd->queued++] = io_u;
+		ret = FIO_Q_QUEUED;
+	}
+
+	return ret;
 }
 
 static int fio_null_open(struct thread_data fio_unused *td,
@@ -104,6 +159,7 @@ static int fio_null_init(struct thread_data *td)
 	} else
 		td->io_ops->flags |= FIO_SYNCIO;
 
+	td->io_ops->flags |= FIO_SYNCIO;
 	td->io_ops->data = nd;
 	return 0;
 }

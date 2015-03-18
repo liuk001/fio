@@ -85,6 +85,8 @@ struct io_u {
 		void *engine_data;
 	};
 
+	struct thread_data *parent;
+
 	struct flist_head verify_list;
 
 	/*
@@ -115,6 +117,7 @@ struct io_u {
 		struct ibv_mr *mr;
 #endif
 		void *mmap_data;
+		uint64_t null;
 	};
 };
 
@@ -245,6 +248,16 @@ static inline enum fio_ddir acct_ddir(struct io_u *io_u)
 		return io_u->acct_ddir;
 
 	return io_u->ddir;
+}
+
+static inline void io_u_clear(struct io_u *io_u, unsigned int flags)
+{
+	__sync_fetch_and_and(&io_u->flags, ~flags);
+}
+
+static inline void io_u_set(struct io_u *io_u, unsigned int flags)
+{
+	__sync_fetch_and_or(&io_u->flags, flags);
 }
 
 #endif

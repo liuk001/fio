@@ -40,6 +40,7 @@
 #include "stat.h"
 #include "flow.h"
 #include "io_u_queue.h"
+#include "workqueue.h"
 
 #ifdef CONFIG_SOLARISAIO
 #include <sys/asynch.h>
@@ -75,6 +76,7 @@ enum {
 	TD_F_NOIO		= 256,
 	TD_F_COMPRESS_LOG	= 512,
 	TD_F_VSTATE_SAVED	= 1024,
+	TD_F_FAKE		= 2048,
 };
 
 enum {
@@ -92,6 +94,11 @@ enum {
 	FIO_RAND_START_DELAY,
 	FIO_DEDUPE_OFF,
 	FIO_RAND_NR_OFFS,
+};
+
+enum {
+	RATE_MODE_RELAXED = 0,
+	RATE_MODE_ENFORCED,
 };
 
 /*
@@ -117,6 +124,7 @@ struct thread_data {
 	struct io_log *iops_log;
 
 	struct tp_data *tp_data;
+	struct thread_data *parent;
 
 	uint64_t stat_io_bytes[DDIR_RWDIR_CNT];
 	struct timeval bw_sample_time;
@@ -232,6 +240,11 @@ struct thread_data {
 	unsigned long rate_blocks[DDIR_RWDIR_CNT];
 	struct timeval lastrate[DDIR_RWDIR_CNT];
 
+	/*
+	 * Enforced rate submission/completion workqueue
+	 */
+	struct workqueue io_wq;
+
 	uint64_t total_io_size;
 	uint64_t fill_device_size;
 
@@ -248,10 +261,11 @@ struct thread_data {
 	uint64_t io_blocks[DDIR_RWDIR_CNT];
 	uint64_t this_io_blocks[DDIR_RWDIR_CNT];
 	uint64_t io_bytes[DDIR_RWDIR_CNT];
-	uint64_t io_skip_bytes;
 	uint64_t this_io_bytes[DDIR_RWDIR_CNT];
+	uint64_t io_skip_bytes;
 	uint64_t zone_bytes;
 	struct fio_mutex *mutex;
+	uint64_t bytes_done[DDIR_RWDIR_CNT];
 
 	/*
 	 * State for random io, a bitmap of blocks done vs not done
@@ -342,6 +356,9 @@ struct thread_data {
 	void *prof_data;
 
 	void *pinned_mem;
+
+	unsigned int ios;
+	unsigned int in_delay;
 };
 
 /*
@@ -616,19 +633,21 @@ static inline int is_power_of_2(uint64_t val)
  */
 static inline void td_io_u_lock(struct thread_data *td)
 {
-	if (td->o.verify_async)
+	assert(!(td->flags & TD_F_FAKE));
+
+	if (td->o.verify_async || td->o.rate_mode == RATE_MODE_ENFORCED)
 		pthread_mutex_lock(&td->io_u_lock);
 }
 
 static inline void td_io_u_unlock(struct thread_data *td)
 {
-	if (td->o.verify_async)
+	if (td->o.verify_async || td->o.rate_mode == RATE_MODE_ENFORCED)
 		pthread_mutex_unlock(&td->io_u_lock);
 }
 
 static inline void td_io_u_free_notify(struct thread_data *td)
 {
-	if (td->o.verify_async)
+	if (td->o.verify_async || td->o.rate_mode == RATE_MODE_ENFORCED)
 		pthread_cond_signal(&td->free_cond);
 }
 
